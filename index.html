@@ -1,0 +1,10 @@
+<?php
+require_once 'db.php';
+
+echo json_encode([
+    'status' => 'ok',
+    'message' => 'Conexion exitosa a la base de datos',
+    'database' => $database,
+    'server_info' => $conn->server_info
+]);
+?>

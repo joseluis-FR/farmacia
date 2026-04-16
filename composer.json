@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Farmacia El Olivo</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, #1B5E20 0%, #2E7D32 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container { width: 100%; max-width: 450px; padding: 20px; }
+        .login-card {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: fadeInUp 0.5s ease;
+        }
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .logo { text-align: center; margin-bottom: 30px; }
+        .logo i { font-size: 60px; color: #2E7D32; }
+        .logo h2 { color: #333; margin-top: 10px; }
+        .logo p { color: #6B7280; font-size: 14px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; color: #333; font-weight: 500; }
+        .input-group { position: relative; }
+        .input-group i {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #6B7280;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 12px 15px 12px 45px;
+            border: 2px solid #E5E7EB;
+            border-radius: 10px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        .input-group input:focus { outline: none; border-color: #2E7D32; }
+        .btn-login {
+            width: 100%;
+            padding: 14px;
+            background: #2E7D32;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-family: 'Poppins', sans-serif;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-login:hover { background: #1B5E20; transform: translateY(-2px); }
+        .btn-login:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .error-message {
+            background: #FEE2E2;
+            color: #DC2626;
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-size: 14px;
+            display: none;
+        }
+        .info-message {
+            background: #E8F5E9;
+            color: #2E7D32;
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-size: 14px;
+        }
+        .footer { text-align: center; margin-top: 20px; color: #6B7280; font-size: 12px; }
+        
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid white;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Prevenir selección de texto */
+        .no-select {
+            user-select: none;
+            -webkit-user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="logo">
+                <i class="fas fa-hospital-user"></i>
+                <h2>Farmacia El Olivo</h2>
+                <p>Sistema de Ventas e Inventario</p>
+            </div>
+            <div id="errorMessage" class="error-message"></div>
+            <div class="info-message">
+                <i class="fas fa-info-circle"></i> Credenciales:<br>
+                Admin: admin / admin123<br>
+                Vendedor: vendedor / ventas123
+            </div>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label>Usuario</label>
+                    <div class="input-group">
+                        <i class="fas fa-user"></i>
+                        <input type="text" id="username" placeholder="Ingrese su usuario" required autocomplete="off">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Contraseña</label>
+                    <div class="input-group">
+                        <i class="fas fa-lock"></i>
+                        <input type="password" id="password" placeholder="Ingrese su contraseña" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn-login" id="loginBtn">
+                    <i class="fas fa-sign-in-alt"></i> Iniciar Sesion
+                </button>
+            </form>
+            <div class="footer">
+                <p>© 2024 Farmacia Saludable - Todos los derechos reservados</p>
+            </div>
+        </div>
+    </div>
+    <script>
+        // Limpiar session storage al cargar login
+        sessionStorage.clear();
+        
+        // Prevenir que el usuario vuelva atrás después de logout
+        history.pushState(null, null, location.href);
+        window.onpopstate = function () {
+            history.go(1);
+        };
+        
+        // Usuarios predefinidos
+        const usuarios = [
+            { id: 1, nombre: 'Administrador', username: 'admin', password: 'admin123', email: 'admin@farmacia.com', rol: 'administrador', loginTime: new Date().toISOString() },
+            { id: 2, nombre: 'Juan Perez', username: 'vendedor', password: 'ventas123', email: 'juan@farmacia.com', rol: 'vendedor', loginTime: new Date().toISOString() },
+            { id: 3, nombre: 'Maria Lopez', username: 'inventario', password: 'inventario123', email: 'maria@farmacia.com', rol: 'inventarista', loginTime: new Date().toISOString() }
+        ];
+        
+        // Guardar usuarios en localStorage si no existen
+        if (!localStorage.getItem('usuariosSistema')) {
+            localStorage.setItem('usuariosSistema', JSON.stringify(usuarios));
+        }
+        
+        // Limitar intentos de login
+        let intentosLogin = 0;
+        let bloqueadoHasta = null;
+        
+        document.getElementById('loginForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            // Verificar si está bloqueado
+            if (bloqueadoHasta && new Date() < bloqueadoHasta) {
+                const minutosRestantes = Math.ceil((bloqueadoHasta - new Date()) / 60000);
+                mostrarError(`Demasiados intentos. Intente de nuevo en ${minutosRestantes} minutos.`);
+                return;
+            }
+            
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            const loginBtn = document.getElementById('loginBtn');
+            
+            if (!username || !password) {
+                mostrarError('Ingrese usuario y contraseña');
+                return;
+            }
+            
+            // Mostrar loading
+            loginBtn.disabled = true;
+            loginBtn.innerHTML = '<div class="spinner"></div> Validando...';
+            
+            // Simular tiempo de procesamiento
+            setTimeout(() => {
+                const usuariosData = JSON.parse(localStorage.getItem('usuariosSistema')) || usuarios;
+                const usuario = usuariosData.find(u => u.username === username && u.password === password);
+                
+                if (usuario) {
+                    // Login exitoso
+                    intentosLogin = 0;
+                    
+                    // Crear token de sesión
+                    const sessionToken = btoa(usuario.id + '|' + Date.now() + '|' + Math.random());
+                    
+                    const sessionData = {
+                        id: usuario.id,
+                        nombre: usuario.nombre,
+                        username: usuario.username,
+                        rol: usuario.rol,
+                        email: usuario.email,
+                        loginTime: new Date().toISOString(),
+                        sessionToken: sessionToken,
+                        ip: 'local'
+                    };
+                    
+                    localStorage.setItem('usuarioActual', JSON.stringify(sessionData));
+                    sessionStorage.setItem('sessionValid', 'true');
+                    sessionStorage.setItem('loginTime', Date.now());
+                    
+                    // Redirigir y prevenir historial
+                    window.location.replace('index.html');
+                } else {
+                    // Login fallido
+                    intentosLogin++;
+                    
+                    if (intentosLogin >= 5) {
+                        bloqueadoHasta = new Date(Date.now() + 5 * 60 * 1000); // Bloquear 5 minutos
+                        mostrarError('Demasiados intentos fallidos. Cuenta bloqueada por 5 minutos.');
+                    } else {
+                        mostrarError(`Usuario o contraseña incorrectos. Intentos restantes: ${5 - intentosLogin}`);
+                    }
+                    
+                    loginBtn.disabled = false;
+                    loginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Iniciar Sesion';
+                    document.getElementById('password').value = '';
+                }
+            }, 500);
+        });
+        
+        function mostrarError(mensaje) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.style.display = 'block';
+            errorDiv.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${mensaje}`;
+            setTimeout(() => errorDiv.style.display = 'none', 4000);
+        }
+    </script>
+</body>
+</html>

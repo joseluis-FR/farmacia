@@ -1,0 +1,1761 @@
+// ==================== CONFIGURACION INICIAL ====================
+const API_URL = window.location.port === '8080' || window.location.port === '8081' 
+    ? `http://${window.location.hostname}:${window.location.port}/farmacia_sistema/api/`
+    : `http://${window.location.hostname}/farmacia_sistema/api/`;
+
+console.log('API URL:', API_URL);
+
+// Variables globales
+let carrito = [];
+let productosGlobal = [];
+let chartVentasHora = null;
+let chartVentasDia = null;
+let chartComparativa = null;
+let chartRentables = null;
+let ticketActualHTML = '';
+let ticketActualTotal = 0;
+let usuariosData = [];
+let usuarioEditandoId = null;
+
+// Datos para facturación
+let facturaDataActual = {
+    tipo: 'ticket',
+    serie: 'F001',
+    numero: '00000001',
+    cliente: {
+        documento: '',
+        nombre: '',
+        direccion: '',
+        email: '',
+        telefono: ''
+    },
+    subtotal: 0,
+    igv: 0,
+    total: 0
+};
+// ==================== SISTEMA DE USUARIOS Y SEGURIDAD ====================
+
+// Verificar sesión al cargar la página
+function verificarSesion() {
+    const usuarioActual = localStorage.getItem('usuarioActual');
+    
+    if (!usuarioActual) {
+        console.log('No hay sesión activa, redirigiendo al login...');
+        window.location.replace('login.html');
+        return false;
+    }
+    
+    try {
+        const usuario = JSON.parse(usuarioActual);
+        
+        // Mostrar información del usuario
+        const userNameSpan = document.getElementById('userName');
+        const userRolSpan = document.getElementById('userRol');
+        
+        if (userNameSpan) {
+            userNameSpan.textContent = usuario.nombre || usuario.username;
+        }
+        
+        if (userRolSpan) {
+            const rolTexto = {
+                'administrador': 'Administrador',
+                'vendedor': 'Vendedor',
+                'inventarista': 'Inventario'
+            };
+            userRolSpan.textContent = rolTexto[usuario.rol] || usuario.rol;
+        }
+        
+        mostrarMenuPorRol(usuario.rol);
+        
+        console.log(`Sesión válida: ${usuario.nombre} (${usuario.rol})`);
+        return usuario;
+        
+    } catch (error) {
+        console.error('Error al verificar sesión:', error);
+        window.location.replace('login.html');
+        return false;
+    }
+}
+
+// Cerrar sesión
+function cerrarSesion() {
+    const usuarioActual = localStorage.getItem('usuarioActual');
+    
+    if (usuarioActual) {
+        const usuario = JSON.parse(usuarioActual);
+        console.log(`Usuario ${usuario.nombre} cerró sesión`);
+    }
+    
+    localStorage.removeItem('usuarioActual');
+    localStorage.removeItem('carrito');
+    window.location.replace('login.html');
+}
+
+// Mostrar menús según el rol
+function mostrarMenuPorRol(rol) {
+    const navUsuarios = document.getElementById('navUsuarios');
+    if (rol === 'administrador') {
+        if (navUsuarios) navUsuarios.style.display = 'flex';
+    } else {
+        if (navUsuarios) navUsuarios.style.display = 'none';
+    }
+}
+
+// Verificar permisos
+function tienePermiso(accion) {
+    const usuario = JSON.parse(localStorage.getItem('usuarioActual') || '{}');
+    const permisos = {
+        'administrador': ['dashboard', 'tienda', 'inventario', 'ventas', 'historial', 'reportes', 'usuarios'],
+        'vendedor': ['dashboard', 'tienda', 'ventas', 'historial'],
+        'inventarista': ['dashboard', 'inventario', 'reportes']
+    };
+    return permisos[usuario.rol]?.includes(accion) || false;
+}
+
+// Obtener usuario actual
+function getUsuarioActual() {
+    return JSON.parse(localStorage.getItem('usuarioActual') || '{}');
+}
+
+// Verificar si es administrador
+function esAdministrador() {
+    return getUsuarioActual().rol === 'administrador';
+}
+// ==================== INICIALIZACION ====================
+document.addEventListener('DOMContentLoaded', () => {
+    if (!verificarSesion()) return;
+    cargarProductosInicial();
+    setupEventListeners();
+    mostrarPestana('dashboard');
+});
+
+// Cargar productos iniciales
+async function cargarProductosInicial() {
+    try {
+        const res = await fetch(API_URL + 'productos.php');
+        productosGlobal = await res.json();
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+// Configurar eventos
+function setupEventListeners() {
+    // Navegación
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            mostrarPestana(item.dataset.tab);
+            document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+            item.classList.add('active');
+        });
+    });
+    
+    // Carrito
+    document.getElementById('cartToggleBtn')?.addEventListener('click', toggleCart);
+    document.getElementById('closeCartBtn')?.addEventListener('click', toggleCart);
+    document.getElementById('cartOverlay')?.addEventListener('click', toggleCart);
+    
+    // Métodos de pago
+    document.querySelectorAll('input[name="pago"]').forEach(radio => {
+        radio.addEventListener('change', togglePagoDetalle);
+    });
+    
+    // Calcular cambio
+    document.getElementById('montoRecibido')?.addEventListener('input', calcularCambio);
+    
+    // Logout
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', cerrarSesion);
+    }
+}
+
+// Alternar carrito
+function toggleCart() {
+    document.getElementById('cartSidebar').classList.toggle('open');
+    document.getElementById('cartOverlay').classList.toggle('active');
+}
+// ==================== NAVEGACION ====================
+function mostrarPestana(tab) {
+    if (!tienePermiso(tab)) {
+        mostrarToast('No tienes permiso para acceder a esta sección', 'error');
+        return;
+    }
+    
+    const titles = {
+        dashboard: { title: 'Dashboard', subtitle: 'Estadisticas y productos mas vendidos' },
+        tienda: { title: 'Tienda', subtitle: 'Productos disponibles para la venta' },
+        inventario: { title: 'Inventario', subtitle: 'Gestion de productos y stock' },
+        ventas: { title: 'Venta Rapida', subtitle: 'Registro de ventas individuales' },
+        historial: { title: 'Historial de Ventas', subtitle: 'Todas las transacciones' },
+        reportes: { title: 'Reportes', subtitle: 'Reportes semanales y analisis' },
+        usuarios: { title: 'Usuarios', subtitle: 'Gestion de usuarios' }
+    };
+    
+    document.getElementById('pageTitle').textContent = titles[tab].title;
+    document.getElementById('pageSubtitle').textContent = titles[tab].subtitle;
+    
+    const container = document.getElementById('tabContent');
+    
+    switch(tab) {
+        case 'dashboard':
+            renderDashboard();
+            break;
+        case 'tienda':
+            renderTienda();
+            break;
+        case 'inventario':
+            renderInventario();
+            break;
+        case 'ventas':
+            renderVentaRapida();
+            break;
+        case 'historial':
+            renderHistorial();
+            break;
+        case 'reportes':
+            renderReportes();
+            break;
+        case 'usuarios':
+            if (esAdministrador()) {
+                renderUsuarios();
+            } else {
+                container.innerHTML = '<div style="text-align:center;padding:50px"><i class="fas fa-lock" style="font-size:48px"></i><h3>Acceso Denegado</h3></div>';
+            }
+            break;
+        default:
+            container.innerHTML = '<div style="text-align:center;padding:50px">Sección no encontrada</div>';
+    }
+}
+// ==================== DASHBOARD ====================
+async function renderDashboard() {
+    const container = document.getElementById('tabContent');
+    container.innerHTML = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px;">
+            <div class="form-card"><div class="form-title">Metricas de Satisfaccion</div><div id="metricasSatisfaccion" style="padding: 15px;"></div></div>
+            <div class="form-card"><div class="form-title">Producto Mas Vendido</div><div id="topProducto" style="text-align: center; padding: 20px;"></div></div>
+        </div>
+        <div class="form-card"><div class="form-title">Ventas por Hora</div><canvas id="ventasPorHoraChart" style="max-height: 300px;"></canvas></div>
+        <div class="form-card"><div class="form-title">Ventas por Dia de la Semana</div><canvas id="ventasPorDiaChart" style="max-height: 300px;"></canvas></div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px;">
+            <div class="form-card"><div class="form-title">Comparativa Mensual</div><div id="comparativaMensual" style="padding: 15px;"></div></div>
+            <div class="form-card"><div class="form-title">Productos Mas Rentables</div><div id="productosRentables" style="max-height: 300px; overflow-y: auto;"></div></div>
+        </div>
+        <div class="form-card"><div class="form-title">Productos con Rotacion Lenta</div><div id="rotacionLenta" style="max-height: 300px; overflow-y: auto;"></div></div>
+        <div class="form-card"><div class="form-title">Pronostico de Ventas</div><canvas id="pronosticoVentasChart" style="max-height: 300px;"></canvas></div>
+        <div class="form-card"><div class="form-title">Top 10 Productos</div><canvas id="topProductosChart" style="max-height: 400px;"></canvas></div>
+        <div style="text-align: center;"><button class="btn-primary" onclick="generarReporteSemanal()">Generar Reporte Semanal</button></div>
+    `;
+    await cargarDashboardData();
+}
+
+async function cargarDashboardData() {
+    try {
+        // Cargar métricas de satisfacción
+        const metricas = await (await fetch(API_URL + 'estadisticas.php?tipo=metricas_satisfaccion')).json();
+        document.getElementById('metricasSatisfaccion').innerHTML = `
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:15px;text-align:center">
+                <div><i class="fas fa-shopping-cart" style="font-size:28px;color:#2E7D32"></i><h3>${metricas.total_ventas_mes}</h3><p>Ventas mes</p></div>
+                <div><i class="fas fa-boxes" style="font-size:28px;color:#2E7D32"></i><h3>${metricas.promedio_productos}</h3><p>Productos x venta</p></div>
+                <div><i class="fas fa-dollar-sign" style="font-size:28px;color:#2E7D32"></i><h3>$${metricas.ticket_promedio}</h3><p>Ticket promedio</p></div>
+                <div><i class="fas fa-users" style="font-size:28px;color:#2E7D32"></i><h3>${metricas.vendedores_activos}</h3><p>Vendedores</p></div>
+            </div>
+            <div style="margin-top:15px;background:#E8F5E9;padding:10px;border-radius:8px;text-align:center">
+                <strong>Tasa satisfaccion:</strong> ${metricas.tasa_conversion}%
+                <div style="background:#C8E6C9;height:8px;border-radius:4px;margin-top:8px"><div style="background:#2E7D32;width:${metricas.tasa_conversion}%;height:8px;border-radius:4px"></div></div>
+            </div>
+        `;
+
+        // Cargar producto más vendido
+        const top = await (await fetch(API_URL + 'estadisticas.php?tipo=producto_mas_vendido')).json();
+        document.getElementById('topProducto').innerHTML = top.nombre ? `
+            <div style="background:linear-gradient(135deg,#2E7D32,#66BB6A);padding:25px;border-radius:12px;color:white;text-align:center">
+                <i class="fas fa-crown" style="font-size:48px"></i>
+                <h3>${top.nombre}</h3>
+                <p>Unidades: ${top.total_vendido}</p>
+                <p>Ingresos: $${parseFloat(top.total_ingresos).toFixed(2)}</p>
+            </div>
+        ` : '<div style="text-align:center;padding:40px">Sin datos</div>';
+
+        // Gráfico de ventas por hora
+        const hora = await (await fetch(API_URL + 'estadisticas.php?tipo=ventas_por_hora')).json();
+        if (chartVentasHora) chartVentasHora.destroy();
+        chartVentasHora = new Chart(document.getElementById('ventasPorHoraChart'), {
+            type: 'line',
+            data: { labels: hora.map(v => `${v.hora}:00`), datasets: [{ label: 'Ventas', data: hora.map(v => v.total_ventas), borderColor: '#2E7D32', fill: true }] }
+        });
+
+        // Gráfico de ventas por día
+        const dia = await (await fetch(API_URL + 'estadisticas.php?tipo=ventas_por_dia_semana')).json();
+        if (chartVentasDia) chartVentasDia.destroy();
+        chartVentasDia = new Chart(document.getElementById('ventasPorDiaChart'), {
+            type: 'bar',
+            data: { labels: dia.map(v => v.dia), datasets: [{ label: 'Ingresos', data: dia.map(v => v.ingresos), backgroundColor: '#2E7D32' }] }
+        });
+
+        // Comparativa mensual
+        const comp = await (await fetch(API_URL + 'estadisticas.php?tipo=comparativa_mensual')).json();
+        document.getElementById('comparativaMensual').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px">
+                <div style="text-align:center;padding:10px;background:#E8F5E9;border-radius:10px"><h4>${comp.mes_actual.nombre_mes}</h4><p>Ventas: ${comp.mes_actual.total_ventas}</p><p>Ingresos: $${comp.mes_actual.ingresos.toFixed(2)}</p></div>
+                <div style="text-align:center;padding:10px;background:#F5F7FA;border-radius:10px"><h4>${comp.mes_anterior.nombre_mes}</h4><p>Ventas: ${comp.mes_anterior.total_ventas}</p><p>Ingresos: $${comp.mes_anterior.ingresos.toFixed(2)}</p></div>
+            </div>
+            <div style="margin-top:15px;padding:10px;background:#E8F5E9;border-radius:8px;text-align:center"><strong>Variacion:</strong> ${comp.variacion.porcentaje_ingresos >= 0 ? '▲' : '▼'} ${Math.abs(comp.variacion.porcentaje_ingresos)}% en ingresos</div>
+        `;
+
+        // Productos más rentables
+        const rentables = await (await fetch(API_URL + 'estadisticas.php?tipo=productos_rentables')).json();
+        document.getElementById('productosRentables').innerHTML = `<table style="width:100%"><tr style="background:#2E7D32;color:white"><th>Producto</th><th>Vendido</th><th>Ganancia</th></tr>${rentables.map(p => `<tr><td style="padding:8px">${p.nombre}</td><td style="text-align:center">${p.total_vendido}</td><td style="text-align:right">$${parseFloat(p.ganancia).toFixed(2)}</td></tr>`).join('')}</table>`;
+
+        // Productos con rotación lenta
+        const rotacion = await (await fetch(API_URL + 'estadisticas.php?tipo=productos_rotacion_lenta')).json();
+        document.getElementById('rotacionLenta').innerHTML = rotacion.length ? `<table style="width:100%"><tr style="background:#FBC02D"><th>Producto</th><th>Stock</th><th>Ventas 30d</th><th>Estado</th></tr>${rotacion.map(p => `<tr><td style="padding:8px">${p.nombre}</td><td style="text-align:center">${p.stock}</td><td style="text-align:center">${p.vendidos}</td><td><span style="background:#FBC02D;padding:2px 8px;border-radius:12px">Lenta</span></td></tr>`).join('')}</table>` : '<div style="text-align:center;padding:20px">No hay productos con rotacion lenta</div>';
+
+        // Pronóstico de ventas
+        const prono = await (await fetch(API_URL + 'estadisticas.php?tipo=pronostico_ventas')).json();
+        if (chartComparativa) chartComparativa.destroy();
+        chartComparativa = new Chart(document.getElementById('pronosticoVentasChart'), {
+            type: 'line',
+            data: {
+                labels: [...(prono.reales?.slice(-7).map(v => v.fecha?.substring(5)) || []), ...(prono.pronostico?.map(v => v.fecha?.substring(5)) || [])],
+                datasets: [
+                    { label: 'Reales', data: [...(prono.reales?.slice(-7).map(v => v.ingresos) || []), ...Array(prono.pronostico?.length || 0).fill(null)], borderColor: '#2E7D32' },
+                    { label: 'Pronostico', data: [...Array(prono.reales?.slice(-7).length || 0).fill(null), ...(prono.pronostico?.map(v => v.pronostico) || [])], borderColor: '#FBC02D', borderDash: [5, 5] }
+                ]
+            }
+        });
+
+        // Top 10 productos
+        const top10 = await (await fetch(API_URL + 'estadisticas.php?tipo=top_productos')).json();
+        if (chartRentables) chartRentables.destroy();
+        chartRentables = new Chart(document.getElementById('topProductosChart'), {
+            type: 'bar',
+            data: { labels: top10.map(p => p.nombre), datasets: [{ label: 'Unidades', data: top10.map(p => p.total_vendido), backgroundColor: '#2E7D32' }] }
+        });
+    } catch (error) {
+        console.error('Error cargando dashboard:', error);
+    }
+}
+// ==================== REPORTE SEMANAL ====================
+async function generarReporteSemanal() {
+    const modal = document.getElementById('reporteSemanalModal');
+    const content = document.getElementById('reporteSemanalContent');
+    content.innerHTML = '<div style="text-align:center;padding:40px">Cargando...</div>';
+    modal.classList.add('show');
+    
+    try {
+        const res = await fetch(API_URL + 'estadisticas.php?tipo=reporte_semanal');
+        const r = await res.json();
+        
+        let html = `<div><div style="text-align:center"><h2>REPORTE SEMANAL</h2><h3>Semana ${r.numero_semana} - ${r.anio}</h3><p>${r.fecha_inicio} al ${r.fecha_fin}</p></div>
+            <h3>Resumen Diario</h3><table style="width:100%; border-collapse:collapse;">
+            <thead><tr style="background:#2E7D32;color:white"><th>Fecha</th><th>Ventas</th><th>Unidades</th><th>Ingresos</th></tr></thead><tbody>`;
+        
+        let totalIngresos = 0, totalUnidades = 0, totalVentas = 0;
+        
+        r.resumen_diario?.forEach(d => {
+            html += `<tr><td style="padding:10px">${d.fecha}</td><td style="text-align:center">${d.total_ventas}</td><td style="text-align:center">${d.unidades_vendidas}</td><td style="text-align:right">$${parseFloat(d.ingresos_totales).toFixed(2)}</td></tr>`;
+            totalIngresos += parseFloat(d.ingresos_totales);
+            totalUnidades += d.unidades_vendidas;
+            totalVentas += d.total_ventas;
+        });
+        
+        html += `<tr style="background:#F5F7FA;font-weight:bold"><td><strong>TOTAL</strong></td><td style="text-align:center">${totalVentas}</td><td style="text-align:center">${totalUnidades}</td><td style="text-align:right">$${totalIngresos.toFixed(2)}</td></tr>
+            </tbody></table>
+            <h3>Top 5 Productos</h3><table style="width:100%"><thead><tr style="background:#2E7D32;color:white"><th>Producto</th><th>Unidades</th></tr></thead><tbody>
+            ${r.top_productos?.map((p, i) => `<tr><td style="padding:10px">${i+1}. ${p.nombre}</td><td style="text-align:center">${p.total_vendido}</td></tr>`).join('')}
+            </tbody></table>
+            <div style="text-align:center;margin-top:20px"><p>Reporte generado: ${new Date().toLocaleString()}</p></div></div>`;
+        
+        content.innerHTML = html;
+    } catch (error) {
+        content.innerHTML = '<div style="color:red">Error al cargar el reporte</div>';
+    }
+}
+
+function cerrarReporteSemanal() {
+    document.getElementById('reporteSemanalModal').classList.remove('show');
+}
+
+function imprimirReporteSemanal() {
+    const content = document.getElementById('reporteSemanalContent').innerHTML;
+    const w = window.open('', '_blank');
+    w.document.write(`<html><head><title>Reporte Semanal</title><style>body{font-family:Arial;padding:40px}th{background:#2E7D32;color:white}table{border-collapse:collapse;width:100%}td,th{padding:10px}</style></head><body>${content}<script>window.print();setTimeout(()=>window.close(),1000);<\/script></body></html>`);
+}
+
+// ==================== TIENDA ====================
+async function renderTienda() {
+    document.getElementById('tabContent').innerHTML = `
+        <div class="products-header">
+            <div class="search-box">
+                <input type="text" id="searchProducto" placeholder="Buscar productos...">
+                <button onclick="buscarProductos()"><i class="fas fa-search"></i></button>
+            </div>
+        </div>
+        <div id="productosGrid" class="products-grid"></div>
+    `;
+    await cargarProductosTienda();
+    document.getElementById('searchProducto')?.addEventListener('input', buscarProductos);
+}
+
+async function cargarProductosTienda(filtro = '') {
+    try {
+        let productos = await (await fetch(API_URL + 'productos.php')).json();
+        if (filtro) {
+            productos = productos.filter(p => p.nombre.toLowerCase().includes(filtro.toLowerCase()));
+        }
+        const grid = document.getElementById('productosGrid');
+        if (!productos.length) {
+            grid.innerHTML = '<div style="text-align:center;padding:50px">No hay productos disponibles</div>';
+            return;
+        }
+        grid.innerHTML = productos.map(p => `
+            <div class="product-card">
+                <div class="product-image">
+                    <i class="fas fa-capsules"></i>
+                    <div class="product-stock-badge">Stock: ${p.stock}</div>
+                </div>
+                <div class="product-info">
+                    <h3>${p.nombre}</h3>
+                    <div class="product-price">$${parseFloat(p.precio).toFixed(2)}</div>
+                    <button class="add-to-cart-btn" onclick="agregarAlCarrito(${p.id}, '${p.nombre}', ${p.precio}, ${p.stock})" ${p.stock === 0 ? 'disabled' : ''}>
+                        <i class="fas fa-cart-plus"></i> ${p.stock === 0 ? 'Sin Stock' : 'Agregar'}
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Error cargando productos:', error);
+    }
+}
+
+function buscarProductos() {
+    const searchTerm = document.getElementById('searchProducto')?.value || '';
+    cargarProductosTienda(searchTerm);
+}
+
+// ==================== CARRITO ====================
+function agregarAlCarrito(id, nombre, precio, stock) {
+    const existente = carrito.find(i => i.id === id);
+    if (existente) {
+        if (existente.cantidad + 1 <= stock) {
+            existente.cantidad++;
+        } else {
+            mostrarToast('Stock insuficiente', 'error');
+            return;
+        }
+    } else {
+        carrito.push({ id, nombre, precio, cantidad: 1 });
+    }
+    actualizarCarritoUI();
+    mostrarToast(`${nombre} agregado al carrito`, 'success');
+}
+
+function actualizarCarritoUI() {
+    const totalItems = carrito.reduce((s, i) => s + i.cantidad, 0);
+    const total = carrito.reduce((s, i) => s + (i.precio * i.cantidad), 0);
+    
+    document.getElementById('cartBadge').textContent = totalItems;
+    
+    if (!carrito.length) {
+        document.getElementById('cartBody').innerHTML = '<div class="empty-cart"><i class="fas fa-shopping-basket"></i><p>Carrito vacio</p><small>Agrega productos desde la tienda</small></div>';
+        document.getElementById('cartFooter').style.display = 'none';
+        return;
+    }
+    
+    document.getElementById('cartBody').innerHTML = carrito.map((item, idx) => `
+        <div class="cart-item">
+            <div class="cart-item-image"><i class="fas fa-capsules"></i></div>
+            <div class="cart-item-info">
+                <h4>${item.nombre}</h4>
+                <div>$${item.precio.toFixed(2)}</div>
+                <div class="cart-item-actions">
+                    <button class="btn-qty-minus" onclick="cambiarCantidad(${idx}, -1)">-</button>
+                    <span>${item.cantidad}</span>
+                    <button class="btn-qty-plus" onclick="cambiarCantidad(${idx}, 1)">+</button>
+                    <button class="btn-remove" onclick="eliminarDelCarrito(${idx})"><i class="fas fa-trash"></i></button>
+                </div>
+            </div>
+            <div><strong>$${(item.precio * item.cantidad).toFixed(2)}</strong></div>
+        </div>
+    `).join('');
+    
+    document.getElementById('cartTotal').textContent = `$${total.toFixed(2)}`;
+    document.getElementById('cartFooter').style.display = 'block';
+}
+
+function cambiarCantidad(idx, cambio) {
+    const nueva = carrito[idx].cantidad + cambio;
+    if (nueva < 1) {
+        eliminarDelCarrito(idx);
+        return;
+    }
+    carrito[idx].cantidad = nueva;
+    actualizarCarritoUI();
+}
+
+function eliminarDelCarrito(idx) {
+    const producto = carrito[idx];
+    carrito.splice(idx, 1);
+    actualizarCarritoUI();
+    mostrarToast(`${producto.nombre} eliminado del carrito`, 'info');
+}
+
+function vaciarCarrito() {
+    if (carrito.length > 0 && confirm('¿Vaciar todo el carrito?')) {
+        carrito = [];
+        actualizarCarritoUI();
+        mostrarToast('Carrito vaciado', 'info');
+    }
+}
+
+//parte 8
+// ==================== PAGO ====================
+function abrirModalPago() {
+    if (!carrito.length) {
+        mostrarToast('Carrito vacio', 'error');
+        return;
+    }
+    const total = carrito.reduce((s, i) => s + (i.precio * i.cantidad), 0);
+    document.getElementById('resumenItems').innerHTML = carrito.map(i => `
+        <div class="resumen-item">
+            <span>${i.cantidad}x ${i.nombre}</span>
+            <span>$${(i.precio * i.cantidad).toFixed(2)}</span>
+        </div>
+    `).join('');
+    document.getElementById('modalTotal').textContent = `$${total.toFixed(2)}`;
+    document.getElementById('pagoModal').classList.add('show');
+}
+
+function cerrarModalPago() {
+    document.getElementById('pagoModal').classList.remove('show');
+}
+
+function togglePagoDetalle() {
+    const metodo = document.querySelector('input[name="pago"]:checked').value;
+    document.getElementById('efectivoDetalle').style.display = metodo === 'efectivo' ? 'block' : 'none';
+    document.getElementById('tarjetaDetalle').style.display = metodo === 'tarjeta' ? 'block' : 'none';
+}
+
+function calcularCambio() {
+    const total = carrito.reduce((s, i) => s + (i.precio * i.cantidad), 0);
+    const recibido = parseFloat(document.getElementById('montoRecibido')?.value || 0);
+    const cambioInfo = document.getElementById('cambioInfo');
+    
+    if (!isNaN(recibido) && recibido >= total) {
+        cambioInfo.innerHTML = `Cambio: $${(recibido - total).toFixed(2)}`;
+    } else if (!isNaN(recibido) && recibido < total) {
+        cambioInfo.innerHTML = `Falta: $${(total - recibido).toFixed(2)}`;
+    } else {
+        cambioInfo.innerHTML = '';
+    }
+}
+
+async function confirmarPago() {
+    const metodo = document.querySelector('input[name="pago"]:checked').value;
+    const total = carrito.reduce((s, i) => s + (i.precio * i.cantidad), 0);
+    
+    if (metodo === 'efectivo') {
+        const recibido = parseFloat(document.getElementById('montoRecibido').value);
+        if (isNaN(recibido) || recibido < total) {
+            mostrarToast('Monto insuficiente', 'error');
+            return;
+        }
+    }
+    if (metodo === 'tarjeta') {
+        const tarjeta = document.getElementById('tarjetaNumero').value;
+        if (!tarjeta || tarjeta.length !== 4) {
+            mostrarToast('Ingrese últimos 4 dígitos de la tarjeta', 'error');
+            return;
+        }
+    }
+    
+    // Mostrar modal de decisión
+    const quiereFactura = await mostrarModalFacturaDecision();
+    
+    if (quiereFactura) {
+        await abrirModalFacturacion();
+    } else {
+        await procesarVentaSinFactura();
+    }
+}
+
+async function procesarVentaSinFactura() {
+    const metodo = document.querySelector('input[name="pago"]:checked').value;
+    const total = carrito.reduce((s, i) => s + (i.precio * i.cantidad), 0);
+    
+    const btn = document.querySelector('#pagoModal .btn-primary');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando...';
+    btn.disabled = true;
+    
+    let ok = true;
+    const usuario = getUsuarioActual();
+    
+    for (const item of carrito) {
+        try {
+            const res = await fetch(API_URL + 'ventas.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ producto_id: item.id, cantidad: item.cantidad })
+            });
+            const result = await res.json();
+            if (!result.success) {
+                ok = false;
+                mostrarToast(`Error con ${item.nombre}: ${result.message}`, 'error');
+                break;
+            }
+        } catch (error) {
+            ok = false;
+            mostrarToast('Error al procesar la venta', 'error');
+            break;
+        }
+    }
+    
+    btn.innerHTML = originalText;
+    btn.disabled = false;
+    
+    if (ok) {
+        const cambio = metodo === 'efectivo' ? parseFloat(document.getElementById('montoRecibido').value) - total : 0;
+        const datos = {
+            ventas: [...carrito],
+            total: total,
+            metodoPago: metodo,
+            montoRecibido: metodo === 'efectivo' ? parseFloat(document.getElementById('montoRecibido').value) : total,
+            cambio: cambio,
+            tarjetaNumero: metodo === 'tarjeta' ? document.getElementById('tarjetaNumero').value : null,
+            banco: metodo === 'tarjeta' ? document.getElementById('banco').value : null,
+            fecha: new Date(),
+            vendedor: usuario?.nombre || 'Desconocido'
+        };
+        
+        ticketActualHTML = generarTicketHTML(datos);
+        ticketActualTotal = total;
+        mostrarTicket(ticketActualHTML);
+        cerrarModalPago();
+        
+        // Cerrar carrito lateral
+        cerrarCarritoLateral();
+        
+        // Limpiar carrito
+        carrito = [];
+        actualizarCarritoUI();
+        
+        // NO mostrar agradecimiento aquí, esperar a que el usuario
+        // imprima, descargue o envíe por correo
+    }
+}
+
+// Función para cerrar el carrito lateral
+function cerrarCarritoLateral() {
+    const cartSidebar = document.getElementById('cartSidebar');
+    const cartOverlay = document.getElementById('cartOverlay');
+    if (cartSidebar) cartSidebar.classList.remove('open');
+    if (cartOverlay) cartOverlay.classList.remove('active');
+}
+
+//parte 9
+// ==================== TICKET ====================
+function generarTicketHTML(datos) {
+    return `
+        <div class="ticket">
+            <div class="ticket-header">
+                <h3>Farmacia El Olivo</h3>
+                <p>C. Emiliano Zapata 35, Séptima Secc, 90670 Contla, Tlax.</p>
+                <p>Tel: 246 232 7454</p>
+                <p>RUC: 12345678901</p>
+                <p>${datos.fecha.toLocaleString()}</p>
+                <p>Vendedor: ${datos.vendedor}</p>
+            </div>
+            <div class="ticket-items">
+                ${datos.ventas.map(i => `
+                    <div class="ticket-item">
+                        <span>${i.cantidad}x ${i.nombre}</span>
+                        <span>$${(i.precio * i.cantidad).toFixed(2)}</span>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="ticket-total">
+                <div class="ticket-item"><strong>TOTAL:</strong><strong>$${datos.total.toFixed(2)}</strong></div>
+                ${datos.metodoPago === 'efectivo' ? `
+                    <div class="ticket-item"><span>Monto recibido:</span><span>$${datos.montoRecibido.toFixed(2)}</span></div>
+                    <div class="ticket-item"><span>Cambio:</span><span>$${datos.cambio.toFixed(2)}</span></div>
+                ` : `
+                    <div class="ticket-item"><span>Tarjeta:</span><span>**** ${datos.tarjetaNumero || '0000'}</span></div>
+                `}
+            </div>
+            <div class="ticket-footer">
+                <p>Gracias por su compra!</p>
+                <p>*** Ticket de Venta ***</p>
+            </div>
+        </div>
+    `;
+}
+
+function mostrarTicket(html) {
+    document.getElementById('ticketContent').innerHTML = html;
+    document.getElementById('ticketModal').classList.add('show');
+    
+    // Agregar event listeners a los botones del ticket
+    const imprimirBtn = document.querySelector('#ticketModal .modal-footer button:first-child');
+    const pdfBtn = document.querySelector('#ticketModal .modal-footer button:nth-child(2)');
+    const emailBtn = document.querySelector('#ticketModal .modal-footer button:nth-child(3)');
+    
+    if (imprimirBtn) {
+        imprimirBtn.onclick = function() {
+            imprimirTicket();
+            mostrarModalAgradecimiento();
+        };
+    }
+    
+    if (pdfBtn) {
+        pdfBtn.onclick = function() {
+            descargarTicketPDF();
+            mostrarModalAgradecimiento();
+        };
+    }
+    
+    if (emailBtn) {
+        emailBtn.onclick = function() {
+            mostrarModalEnvioCorreo();
+        };
+    }
+}
+
+function cerrarModalTicket() {
+    document.getElementById('ticketModal').classList.remove('show');
+}
+
+function imprimirTicket() {
+    const content = document.getElementById('ticketContent').innerHTML;
+    
+    // Crear una ventana con mejor formato para impresión
+    const ventana = window.open('', '_blank');
+    ventana.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Ticket de Venta - Farmacia El Olivo</title>
+            <meta charset="UTF-8">
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                body {
+                    font-family: 'Courier New', monospace;
+                    padding: 20px;
+                    background: white;
+                }
+                .ticket {
+                    max-width: 300px;
+                    margin: 0 auto;
+                    background: white;
+                }
+                .ticket-header {
+                    text-align: center;
+                    border-bottom: 1px dashed #000;
+                    padding-bottom: 10px;
+                    margin-bottom: 15px;
+                }
+                .ticket-header h3 {
+                    margin: 5px 0;
+                    font-size: 16px;
+                }
+                .ticket-header p {
+                    margin: 3px 0;
+                    font-size: 11px;
+                }
+                .ticket-items {
+                    margin: 15px 0;
+                }
+                .ticket-item {
+                    display: flex;
+                    justify-content: space-between;
+                    padding: 5px 0;
+                    border-bottom: 1px dotted #ccc;
+                }
+                .ticket-total {
+                    margin-top: 15px;
+                    padding-top: 10px;
+                    border-top: 1px dashed #000;
+                }
+                .ticket-footer {
+                    text-align: center;
+                    margin-top: 15px;
+                    padding-top: 10px;
+                    border-top: 1px dashed #000;
+                    font-size: 10px;
+                }
+                @media print {
+                    body {
+                        padding: 0;
+                        margin: 0;
+                    }
+                    .no-print {
+                        display: none;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="ticket">
+                ${content}
+            </div>
+            <div class="no-print" style="text-align:center; margin-top:20px;">
+                <button onclick="window.print()" style="padding:10px 20px; margin:5px;">🖨️ Imprimir</button>
+                <button onclick="window.close()" style="padding:10px 20px; margin:5px;">❌ Cerrar</button>
+            </div>
+            <script>
+                // Auto-imprimir después de cargar
+                setTimeout(() => {
+                    window.print();
+                }, 500);
+            <\/script>
+        </body>
+        </html>
+    `);
+    ventana.document.close();
+    
+    // No cerramos el ticket aquí, esperamos a que el usuario cierre la ventana de impresión
+    // Pero preparamos para cuando regrese
+    const checkWindow = setInterval(() => {
+        if (ventana.closed) {
+            clearInterval(checkWindow);
+            cerrarModalTicket();
+            setTimeout(() => {
+                mostrarModalAgradecimiento();
+            }, 500);
+            
+            // Limpiar carrito
+            carrito = [];
+            actualizarCarritoUI();
+            cargarProductosTienda();
+            if (document.getElementById('productosBody')) cargarProductosInventario();
+            cargarDashboardData();
+            if (document.getElementById('historialBody')) renderHistorial();
+        }
+    }, 1000);
+}
+async function descargarTicketPDF() {
+    // Mostrar loading
+    mostrarToast('Generando PDF, por favor espere...', 'info');
+    
+    // Obtener el contenido del ticket
+    const ticketContent = document.getElementById('ticketContent');
+    const ticketHTML = ticketContent.innerHTML;
+    
+    // Crear un contenedor temporal con mejor formato para PDF
+    const tempDiv = document.createElement('div');
+    tempDiv.style.cssText = `
+        position: absolute;
+        left: -9999px;
+        top: 0;
+        width: 300px;
+        padding: 20px;
+        background: white;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+    `;
+    
+    // Mejorar el formato del ticket para PDF
+    tempDiv.innerHTML = `
+        <style>
+            .ticket-pdf {
+                width: 100%;
+                max-width: 280px;
+                margin: 0 auto;
+                font-family: 'Courier New', monospace;
+                font-size: 11px;
+            }
+            .ticket-header-pdf {
+                text-align: center;
+                border-bottom: 1px dashed #000;
+                padding-bottom: 10px;
+                margin-bottom: 15px;
+            }
+            .ticket-header-pdf h3 {
+                margin: 5px 0;
+                font-size: 14px;
+            }
+            .ticket-header-pdf p {
+                margin: 3px 0;
+                font-size: 10px;
+            }
+            .ticket-items-pdf {
+                margin: 15px 0;
+            }
+            .ticket-item-pdf {
+                display: flex;
+                justify-content: space-between;
+                padding: 5px 0;
+                border-bottom: 1px dotted #ccc;
+            }
+            .ticket-total-pdf {
+                margin-top: 15px;
+                padding-top: 10px;
+                border-top: 1px dashed #000;
+            }
+            .ticket-footer-pdf {
+                text-align: center;
+                margin-top: 15px;
+                padding-top: 10px;
+                border-top: 1px dashed #000;
+                font-size: 9px;
+            }
+            .text-center { text-align: center; }
+            .text-right { text-align: right; }
+            .font-bold { font-weight: bold; }
+        </style>
+        <div class="ticket-pdf">
+            ${ticketHTML}
+        </div>
+    `;
+    
+    document.body.appendChild(tempDiv);
+    
+    try {
+        const canvas = await html2canvas(tempDiv, {
+            scale: 3,
+            backgroundColor: '#ffffff',
+            logging: false,
+            useCORS: true
+        });
+        
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        
+        // Calcular dimensiones para que quepa bien
+        const imgWidth = 80; // mm
+        const pageHeight = 297; // mm A4
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        
+        let pdf = new jsPDF({
+            unit: 'mm',
+            format: [imgWidth + 20, Math.min(imgHeight + 20, pageHeight)],
+            orientation: 'portrait'
+        });
+        
+        pdf.addImage(imgData, 'PNG', 10, 10, imgWidth, imgHeight);
+        
+        // Preguntar al usuario dónde guardar
+        const nombreArchivo = `ticket_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.pdf`;
+        pdf.save(nombreArchivo);
+        
+        // Mostrar mensaje de éxito
+        mostrarToast(' PDF generado correctamente', 'success');
+        
+        // Cerrar modal de ticket
+        cerrarModalTicket();
+        
+        // Mostrar mensaje de agradecimiento
+        setTimeout(() => {
+            mostrarModalAgradecimiento();
+        }, 500);
+        
+        // Limpiar carrito y actualizar vistas
+        carrito = [];
+        actualizarCarritoUI();
+        cargarProductosTienda();
+        if (document.getElementById('productosBody')) cargarProductosInventario();
+        cargarDashboardData();
+        if (document.getElementById('historialBody')) renderHistorial();
+        
+    } catch (error) {
+        console.error('Error al generar PDF:', error);
+        mostrarToast('Error al generar el PDF. Intente nuevamente.', 'error');
+    } finally {
+        document.body.removeChild(tempDiv);
+    }
+}
+//parte 10
+// ==================== FACTURACION ====================
+function abrirModalFacturacion() {
+    const total = carrito.reduce((s, i) => s + (i.precio * i.cantidad), 0);
+    facturaDataActual.subtotal = total / 1.18;
+    facturaDataActual.igv = total - facturaDataActual.subtotal;
+    facturaDataActual.total = total;
+    
+    document.getElementById('resumenFacturaItems').innerHTML = carrito.map(i => `
+        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #E5E7EB">
+            <span>${i.cantidad}x ${i.nombre}</span>
+            <span>$${(i.precio * i.cantidad).toFixed(2)}</span>
+        </div>
+    `).join('');
+    
+    document.getElementById('facturaSubtotal').textContent = `$${facturaDataActual.subtotal.toFixed(2)}`;
+    document.getElementById('facturaIGV').textContent = `$${facturaDataActual.igv.toFixed(2)}`;
+    document.getElementById('facturaTotal').textContent = `$${facturaDataActual.total.toFixed(2)}`;
+    document.getElementById('facturacionModal').classList.add('show');
+}
+
+function cerrarModalFacturacion() {
+    document.getElementById('facturacionModal').classList.remove('show');
+}
+
+function cambiarTipoComprobante() {
+    const tipo = document.getElementById('tipoComprobante').value;
+    document.getElementById('datosFactura').style.display = (tipo === 'factura' || tipo === 'boleta') ? 'block' : 'none';
+    facturaDataActual.tipo = tipo;
+    facturaDataActual.serie = tipo === 'factura' ? 'F001' : (tipo === 'boleta' ? 'B001' : '');
+}
+
+async function generarFactura() {
+    const tipo = document.getElementById('tipoComprobante').value;
+    
+    if (tipo === 'factura' || tipo === 'boleta') {
+        facturaDataActual.cliente = {
+            documento: document.getElementById('numeroDocumento').value,
+            nombre: document.getElementById('razonSocial').value,
+            direccion: document.getElementById('direccionCliente').value,
+            email: document.getElementById('emailClienteFactura').value,
+            telefono: document.getElementById('telefonoCliente').value
+        };
+        
+        if (tipo === 'factura') {
+            if (!facturaDataActual.cliente.documento || facturaDataActual.cliente.documento.length < 8) {
+                mostrarToast('Para Factura Electrónica, ingrese un RUC/DNI válido', 'error');
+                return;
+            }
+            if (!facturaDataActual.cliente.nombre) {
+                mostrarToast('Ingrese la razón social o nombre completo', 'error');
+                return;
+            }
+        }
+    }
+    
+    const usuario = getUsuarioActual();
+    const metodo = document.querySelector('input[name="pago"]:checked').value;
+    
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generando...';
+    btn.disabled = true;
+    
+    try {
+        const res = await fetch(API_URL + 'factura.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tipo: facturaDataActual.tipo,
+                serie: facturaDataActual.serie,
+                numero: '00000001',
+                cliente: facturaDataActual.cliente,
+                subtotal: facturaDataActual.subtotal,
+                igv: facturaDataActual.igv,
+                total: facturaDataActual.total,
+                items: carrito.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, precio: i.precio })),
+                metodo_pago: metodo,
+                vendedor: usuario?.nombre || 'Desconocido'
+            })
+        });
+        
+        const result = await res.json();
+        
+        if (result.success) {
+            for (const item of carrito) {
+                await fetch(API_URL + 'ventas.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ producto_id: item.id, cantidad: item.cantidad })
+                });
+            }
+            
+            const montoRecibido = parseFloat(document.getElementById('montoRecibido')?.value || facturaDataActual.total);
+            
+            const datos = {
+                ventas: [...carrito],
+                total: facturaDataActual.total,
+                metodoPago: metodo,
+                montoRecibido: montoRecibido,
+                cambio: metodo === 'efectivo' ? montoRecibido - facturaDataActual.total : 0,
+                fecha: new Date(),
+                vendedor: usuario?.nombre || 'Desconocido',
+                factura: {
+                    tipo: facturaDataActual.tipo,
+                    serie: facturaDataActual.serie,
+                    numero: '00000001',
+                    cliente: facturaDataActual.cliente,
+                    subtotal: facturaDataActual.subtotal,
+                    igv: facturaDataActual.igv
+                }
+            };
+            
+            ticketActualHTML = generarTicketFactura(datos);
+            ticketActualTotal = facturaDataActual.total;
+            mostrarTicket(ticketActualHTML);
+            cerrarModalFacturacion();
+            cerrarModalPago();
+            cerrarCarritoLateral();
+            
+            // Limpiar carrito
+            carrito = [];
+            actualizarCarritoUI();
+            
+        } else {
+            mostrarToast('Error: ' + result.message, 'error');
+        }
+    } catch (error) {
+        mostrarToast('Error al generar el comprobante', 'error');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+function generarTicketFactura(datos) {
+    const esFactura = datos.factura.tipo !== 'ticket';
+    const tipoTexto = {
+        'factura': 'FACTURA ELECTRONICA',
+        'boleta': 'BOLETA DE VENTA',
+        'ticket': 'TICKET DE VENTA'
+    };
+    
+    const clienteInfo = esFactura && datos.factura.cliente.nombre ? `
+        <div style="margin:10px 0;padding:10px;background:#F5F7FA;border-radius:5px">
+            <strong>DATOS DEL CLIENTE</strong><br>
+            ${datos.factura.cliente.nombre}<br>
+            ${datos.factura.cliente.documento ? `Doc: ${datos.factura.cliente.documento}<br>` : ''}
+            ${datos.factura.cliente.direccion ? `Dirección: ${datos.factura.cliente.direccion}<br>` : ''}
+            ${datos.factura.cliente.email ? `Email: ${datos.factura.cliente.email}` : ''}
+        </div>
+    ` : '';
+    
+    return `
+        <div class="ticket">
+            <div class="ticket-header">
+                <h3>Farmacia El Olivo</h3>
+                <p>RUC: 12345678901</p>
+                <p><strong>${tipoTexto[datos.factura.tipo]}</strong></p>
+                ${esFactura ? `<p>${datos.factura.serie}-${datos.factura.numero}</p>` : ''}
+                <p>${datos.fecha.toLocaleString()}</p>
+                <p>Vendedor: ${datos.vendedor}</p>
+            </div>
+            ${clienteInfo}
+            <div class="ticket-items">
+                ${datos.ventas.map(i => `
+                    <div class="ticket-item">
+                        <span>${i.cantidad}x ${i.nombre}</span>
+                        <span>$${(i.precio * i.cantidad).toFixed(2)}</span>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="ticket-total">
+                ${esFactura ? `
+                    <div class="ticket-item"><span>Subtotal:</span><span>$${datos.factura.subtotal.toFixed(2)}</span></div>
+                    <div class="ticket-item"><span>IGV 18%:</span><span>$${datos.factura.igv.toFixed(2)}</span></div>
+                ` : ''}
+                <div class="ticket-item"><strong>TOTAL:</strong><strong>$${datos.total.toFixed(2)}</strong></div>
+                ${datos.metodoPago === 'efectivo' ? `
+                    <div class="ticket-item"><span>Monto recibido:</span><span>$${datos.montoRecibido.toFixed(2)}</span></div>
+                    <div class="ticket-item"><span>Cambio:</span><span>$${datos.cambio.toFixed(2)}</span></div>
+                ` : `
+                    <div class="ticket-item"><span>Tarjeta:</span><span>**** ${datos.tarjetaNumero || '0000'}</span></div>
+                `}
+            </div>
+            <div class="ticket-footer">
+                <p>¡Gracias por su compra!</p>
+                <p>*** ${esFactura ? 'Comprobante Electrónico' : 'Ticket de Venta'} ***</p>
+            </div>
+        </div>
+    `;
+}
+//parte 11
+
+// ==================== ENVIO DE CORREO ====================
+function mostrarModalEnvioCorreo() {
+    document.getElementById('emailInputModal').classList.add('show');
+    document.getElementById('emailClienteInput').value = '';
+    document.getElementById('mensajeAdicional').value = '';
+}
+
+function cerrarModalEmailInput() {
+    document.getElementById('emailInputModal').classList.remove('show');
+}
+
+async function enviarTicketEmailMultiple() {
+    const emailsInput = document.getElementById('emailClienteInput').value;
+    const mensajeAdicional = document.getElementById('mensajeAdicional')?.value || '';
+    
+    if (!emailsInput) {
+        mostrarToast('Ingrese al menos un correo electrónico', 'error');
+        return;
+    }
+    
+    const emailsArray = emailsInput.split(',').map(email => email.trim());
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const validEmails = emailsArray.filter(email => emailRegex.test(email));
+    
+    if (validEmails.length === 0) {
+        mostrarToast('No hay correos electrónicos válidos', 'error');
+        return;
+    }
+    
+    const btn = event.target;
+    const textoOriginal = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+    btn.disabled = true;
+    
+    try {
+        const ticketHTML = document.getElementById('ticketContent').innerHTML;
+        
+        const response = await fetch(API_URL + 'enviar_correo.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                emails: validEmails,
+                ticket_html: ticketHTML,
+                mensaje: mensajeAdicional
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            cerrarModalEmailInput();
+            cerrarModalTicket(); // Cerrar el ticket
+            mostrarModalAgradecimiento(); // Mostrar agradecimiento
+            mostrarToast(` Ticket enviado a: ${validEmails.join(', ')}`, 'success');
+            
+            // Limpiar carrito y actualizar vistas
+            carrito = [];
+            actualizarCarritoUI();
+            cargarProductosTienda();
+            if (document.getElementById('productosBody')) cargarProductosInventario();
+            cargarDashboardData();
+            if (document.getElementById('historialBody')) renderHistorial();
+        } else {
+            mostrarToast('Error: ' + result.message, 'error');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        
+        // Fallback: descargar localmente
+        const ticketHTML = document.getElementById('ticketContent').innerHTML;
+        const blob = new Blob([ticketHTML], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ticket_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.html`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        cerrarModalEmailInput();
+        cerrarModalTicket();
+        mostrarModalAgradecimiento();
+        mostrarToast('⚠️ No se pudo enviar el correo. El ticket se ha descargado.', 'warning');
+    } finally {
+        btn.innerHTML = textoOriginal;
+        btn.disabled = false;
+    }
+}
+//parte 12
+// ==================== INVENTARIO ====================
+async function renderInventario() {
+    document.getElementById('tabContent').innerHTML = `
+        <div class="form-card">
+            <div class="form-title">Nuevo Producto</div>
+            <form id="productoForm">
+                <input type="hidden" id="productoId">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Nombre</label>
+                        <input type="text" id="nombre" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Precio</label>
+                        <input type="number" id="precio" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Stock</label>
+                        <input type="number" id="stock" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Stock minimo</label>
+                        <input type="number" id="stock_minimo" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn-primary">Guardar</button>
+                <button type="button" class="btn-secondary" onclick="resetFormulario()">Cancelar</button>
+            </form>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID</th><th>Nombre</th><th>Precio</th><th>Stock</th><th>Stock Minimo</th><th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="productosBody"></tbody>
+            </table>
+        </div>
+    `;
+    await cargarProductosInventario();
+    document.getElementById('productoForm').addEventListener('submit', guardarProducto);
+}
+
+async function cargarProductosInventario() {
+    try {
+        const productos = await (await fetch(API_URL + 'productos.php')).json();
+        const tbody = document.getElementById('productosBody');
+        tbody.innerHTML = productos.map(p => `
+            <tr>
+                <td>${p.id}</td>
+                <td>${p.nombre}</td>
+                <td>$${parseFloat(p.precio).toFixed(2)}</td>
+                <td style="${p.stock <= p.stock_minimo ? 'color:#E53935;font-weight:bold' : ''}">${p.stock}</td>
+                <td>${p.stock_minimo}</td>
+                <td>
+                    <button class="btn-secondary" onclick="editarProducto(${p.id})">Editar</button>
+                    <button class="btn-danger" onclick="eliminarProducto(${p.id})">Eliminar</button>
+                </td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+async function guardarProducto(e) {
+    e.preventDefault();
+    const id = document.getElementById('productoId').value;
+    const producto = {
+        nombre: document.getElementById('nombre').value,
+        precio: parseFloat(document.getElementById('precio').value),
+        stock: parseInt(document.getElementById('stock').value),
+        stock_minimo: parseInt(document.getElementById('stock_minimo').value)
+    };
+    
+    try {
+        const res = await fetch(API_URL + 'productos.php', {
+            method: id ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(id ? { ...producto, id: parseInt(id) } : producto)
+        });
+        const result = await res.json();
+        if (result.success) {
+            mostrarToast(result.message, 'success');
+            resetFormulario();
+            renderInventario();
+            cargarProductosTienda();
+            cargarDashboardData();
+        } else {
+            mostrarToast('Error: ' + result.error, 'error');
+        }
+    } catch (error) {
+        mostrarToast('Error al guardar', 'error');
+    }
+}
+
+async function editarProducto(id) {
+    const p = await (await fetch(API_URL + `productos.php?id=${id}`)).json();
+    document.getElementById('productoId').value = p.id;
+    document.getElementById('nombre').value = p.nombre;
+    document.getElementById('precio').value = p.precio;
+    document.getElementById('stock').value = p.stock;
+    document.getElementById('stock_minimo').value = p.stock_minimo;
+    document.querySelector('#productoForm button[type="submit"]').textContent = 'Actualizar';
+}
+
+async function eliminarProducto(id) {
+    if (!confirm('¿Eliminar este producto?')) return;
+    const res = await fetch(API_URL + `productos.php?id=${id}`, { method: 'DELETE' });
+    const result = await res.json();
+    if (result.success) {
+        mostrarToast('Producto eliminado', 'success');
+        renderInventario();
+        cargarProductosTienda();
+        cargarDashboardData();
+    }
+}
+
+function resetFormulario() {
+    document.getElementById('productoForm').reset();
+    document.getElementById('productoId').value = '';
+    document.querySelector('#productoForm button[type="submit"]').textContent = 'Guardar';
+}
+
+//parte 13
+// ==================== VENTA RAPIDA ====================
+async function renderVentaRapida() {
+    document.getElementById('tabContent').innerHTML = `
+        <div class="form-card">
+            <div class="form-title">Venta Rapida</div>
+            <form id="ventaForm">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Producto</label>
+                        <select id="productoVenta" required></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Cantidad</label>
+                        <input type="number" id="cantidadVenta" min="1" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn-primary">Registrar Venta</button>
+            </form>
+        </div>
+    `;
+    await cargarSelectProductos();
+    document.getElementById('ventaForm').addEventListener('submit', registrarVentaRapida);
+}
+
+async function cargarSelectProductos() {
+    const productos = await (await fetch(API_URL + 'productos.php')).json();
+    const select = document.getElementById('productoVenta');
+    select.innerHTML = '<option value="">Seleccionar</option>' + 
+        productos.filter(p => p.stock > 0).map(p => `<option value="${p.id}">${p.nombre} - $${p.precio} (Stock: ${p.stock})</option>`).join('');
+}
+
+async function registrarVentaRapida(e) {
+    e.preventDefault();
+    const id = document.getElementById('productoVenta').value;
+    const cant = document.getElementById('cantidadVenta').value;
+    
+    if (!id || !cant) {
+        mostrarToast('Complete todos los campos', 'error');
+        return;
+    }
+    
+    const res = await fetch(API_URL + 'ventas.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ producto_id: parseInt(id), cantidad: parseInt(cant) })
+    });
+    const result = await res.json();
+    
+    if (result.success) {
+        mostrarToast(`Venta registrada: $${result.total.toFixed(2)}`, 'success');
+        document.getElementById('ventaForm').reset();
+        cargarSelectProductos();
+        cargarProductosTienda();
+        renderInventario();
+        cargarDashboardData();
+        renderHistorial();
+    } else {
+        mostrarToast('Error: ' + result.message, 'error');
+    }
+}
+
+// ==================== HISTORIAL ====================
+async function renderHistorial() {
+    document.getElementById('tabContent').innerHTML = `
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr><th>ID</th><th>Fecha</th><th>Producto</th><th>Cantidad</th><th>Total</th></tr>
+                </thead>
+                <tbody id="historialBody"></tbody>
+            </table>
+        </div>
+    `;
+    
+    const ventas = await (await fetch(API_URL + 'historial.php')).json();
+    document.getElementById('historialBody').innerHTML = ventas.map(v => `
+        <tr>
+            <td>${v.id}</td>
+            <td>${v.fecha}</td>
+            <td>${v.producto}</td>
+            <td>${v.cantidad}</td>
+            <td>$${parseFloat(v.total).toFixed(2)}</td>
+        </tr>
+    `).join('');
+}
+
+// ==================== REPORTES ====================
+function renderReportes() {
+    document.getElementById('tabContent').innerHTML = `
+        <div style="text-align:center;padding:40px">
+            <div class="form-card" style="max-width:500px;margin:0 auto">
+                <div class="form-title">Reportes de Ventas</div>
+                <p style="margin:20px 0">Genera reportes detallados de tus ventas semanales</p>
+                <button class="btn-primary" onclick="generarReporteSemanal()">Generar Reporte Semanal</button>
+            </div>
+        </div>
+    `;
+}
+
+//parte 14
+// ==================== MODULO DE USUARIOS ====================
+function renderUsuarios() {
+    const container = document.getElementById('tabContent');
+    container.innerHTML = `
+        <div class="form-card">
+            <div class="form-title">Nuevo Usuario</div>
+            <form id="usuarioForm">
+                <input type="hidden" id="usuarioId" value="">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Nombre completo</label>
+                        <input type="text" id="nombreUsuario" required placeholder="Ej: Juan Perez">
+                    </div>
+                    <div class="form-group">
+                        <label>Usuario</label>
+                        <input type="text" id="usernameUsuario" required placeholder="Ej: juanperez">
+                    </div>
+                    <div class="form-group">
+                        <label>Contraseña</label>
+                        <input type="password" id="passwordUsuario" required placeholder="********">
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" id="emailUsuario" required placeholder="usuario@ejemplo.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Rol</label>
+                        <select id="rolUsuario">
+                            <option value="vendedor">Vendedor</option>
+                            <option value="inventarista">Inventarista</option>
+                            <option value="administrador">Administrador</option>
+                        </select>
+                    </div>
+                </div>
+                <button type="submit" class="btn-primary">Guardar Usuario</button>
+                <button type="button" class="btn-secondary" onclick="cancelarEdicionUsuario()">Cancelar</button>
+            </form>
+        </div>
+        <div class="table-container">
+            <h3>Usuarios del Sistema</h3>
+            <table class="data-table">
+                <thead>
+                    <tr><th>ID</th><th>Nombre</th><th>Usuario</th><th>Email</th><th>Rol</th><th>Acciones</th></tr>
+                </thead>
+                <tbody id="usuariosBody"></tbody>
+            </table>
+        </div>
+    `;
+    
+    cargarListaUsuarios();
+    document.getElementById('usuarioForm').addEventListener('submit', crearUsuario);
+}
+
+function cargarListaUsuarios() {
+    const usuarios = JSON.parse(localStorage.getItem('usuariosSistema')) || [
+        { id: 1, nombre: 'Administrador', username: 'admin', password: 'admin123', email: 'admin@farmacia.com', rol: 'administrador', loginTime: new Date().toISOString() },
+        { id: 2, nombre: 'Juan Perez', username: 'vendedor', password: 'ventas123', email: 'juan@farmacia.com', rol: 'vendedor', loginTime: new Date().toISOString() },
+        { id: 3, nombre: 'Maria Lopez', username: 'inventario', password: 'inventario123', email: 'maria@farmacia.com', rol: 'inventarista', loginTime: new Date().toISOString() }
+    ];
+    
+    const tbody = document.getElementById('usuariosBody');
+    tbody.innerHTML = usuarios.map(u => `
+        <tr>
+            <td>${u.id}</td>
+            <td>${u.nombre}</td>
+            <td>${u.username}</td>
+            <td>${u.email}</td>
+            <td><span class="rol-badge rol-${u.rol}">${u.rol}</span></td>
+            <td>
+                <button class="btn-secondary" onclick="editarUsuario(${u.id})">Editar</button>
+                <button class="btn-danger" onclick="eliminarUsuario(${u.id})">Eliminar</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function crearUsuario(e) {
+    e.preventDefault();
+    const usuarios = JSON.parse(localStorage.getItem('usuariosSistema')) || [];
+    const nuevoUsuario = {
+        id: Date.now(),
+        nombre: document.getElementById('nombreUsuario').value,
+        username: document.getElementById('usernameUsuario').value,
+        password: document.getElementById('passwordUsuario').value,
+        email: document.getElementById('emailUsuario').value,
+        rol: document.getElementById('rolUsuario').value,
+        loginTime: new Date().toISOString()
+    };
+    
+    usuarios.push(nuevoUsuario);
+    localStorage.setItem('usuariosSistema', JSON.stringify(usuarios));
+    mostrarToast('Usuario creado exitosamente', 'success');
+    document.getElementById('usuarioForm').reset();
+    cargarListaUsuarios();
+}
+
+function editarUsuario(id) {
+    const usuarios = JSON.parse(localStorage.getItem('usuariosSistema')) || [];
+    const usuario = usuarios.find(u => u.id == id);
+    
+    if (usuario) {
+        document.getElementById('usuarioId').value = usuario.id;
+        document.getElementById('nombreUsuario').value = usuario.nombre;
+        document.getElementById('usernameUsuario').value = usuario.username;
+        document.getElementById('emailUsuario').value = usuario.email;
+        document.getElementById('rolUsuario').value = usuario.rol;
+        document.getElementById('passwordUsuario').required = false;
+        document.getElementById('passwordUsuario').placeholder = 'Dejar en blanco para no cambiar';
+        
+        const submitBtn = document.querySelector('#usuarioForm button[type="submit"]');
+        if (submitBtn) submitBtn.textContent = 'Actualizar Usuario';
+        
+        mostrarToast(`Editando usuario: ${usuario.nombre}`, 'info');
+    }
+}
+
+function eliminarUsuario(id) {
+    const usuarioActual = JSON.parse(localStorage.getItem('usuarioActual') || '{}');
+    
+    if (usuarioActual.id == id) {
+        mostrarToast('No puedes eliminar tu propio usuario', 'error');
+        return;
+    }
+    
+    if (id == 1) {
+        mostrarToast('No se puede eliminar al administrador principal', 'error');
+        return;
+    }
+    
+    if (confirm('¿Eliminar este usuario? Esta acción no se puede deshacer')) {
+        let usuarios = JSON.parse(localStorage.getItem('usuariosSistema')) || [];
+        usuarios = usuarios.filter(u => u.id != id);
+        localStorage.setItem('usuariosSistema', JSON.stringify(usuarios));
+        cargarListaUsuarios();
+        mostrarToast('Usuario eliminado', 'success');
+    }
+}
+
+function cancelarEdicionUsuario() {
+    document.getElementById('usuarioForm').reset();
+    document.getElementById('usuarioId').value = '';
+    document.getElementById('passwordUsuario').required = true;
+    document.getElementById('passwordUsuario').placeholder = '********';
+    const submitBtn = document.querySelector('#usuarioForm button[type="submit"]');
+    if (submitBtn) submitBtn.textContent = 'Guardar Usuario';
+}
+//parte 15
+// ==================== MODALES INTERACTIVOS ====================
+function mostrarModalCompraExitosa() {
+    document.getElementById('ticketModal').classList.remove('show');
+    document.getElementById('compraExitosaModal').classList.add('show');
+}
+
+function cerrarCompraExitosa() {
+    document.getElementById('compraExitosaModal').classList.remove('show');
+    // Las vistas ya se actualizaron cuando se imprimió/descargó/envió el ticket
+    // Solo aseguramos que el carrito esté limpio
+    if (carrito.length === 0) {
+        actualizarCarritoUI();
+    }
+}
+
+function mostrarModalFacturaDecision() {
+    return new Promise((resolve) => {
+        window.resolveFactura = resolve;
+        document.getElementById('facturaDecisionModal').classList.add('show');
+    });
+}
+
+function confirmarFacturaSi() {
+    document.getElementById('facturaDecisionModal').classList.remove('show');
+    if (window.resolveFactura) window.resolveFactura(true);
+}
+
+function confirmarFacturaNo() {
+    document.getElementById('facturaDecisionModal').classList.remove('show');
+    if (window.resolveFactura) window.resolveFactura(false);
+}
+
+function mostrarModalEmailExito(mensaje) {
+    document.getElementById('emailExitoMensaje').textContent = mensaje;
+    document.getElementById('emailExitoModal').classList.add('show');
+}
+
+function cerrarEmailExito() {
+    document.getElementById('emailExitoModal').classList.remove('show');
+}
+
+// Toast notifications
+function mostrarToast(mensaje, tipo = 'success') {
+    const toast = document.createElement('div');
+    toast.className = 'toast-notification';
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: ${tipo === 'success' ? '#2E7D32' : tipo === 'error' ? '#E53935' : '#FBC02D'};
+        color: ${tipo === 'warning' ? '#333' : 'white'};
+        padding: 12px 20px;
+        border-radius: 8px;
+        z-index: 3000;
+        animation: slideInRight 0.3s ease;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        font-size: 14px;
+        font-weight: 500;
+    `;
+    toast.innerHTML = `<i class="fas ${tipo === 'success' ? 'fa-check-circle' : tipo === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}"></i> ${mensaje}`;
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.style.animation = 'slideOutRight 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+//parte 16
+
+// ==================== ESTILOS ADICIONALES ====================
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideInRight {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    @keyframes slideOutRight {
+        from { transform: translateX(0); opacity: 1; }
+        to { transform: translateX(100%); opacity: 0; }
+    }
+    @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(30px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .rol-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 500;
+    }
+    .rol-administrador { background: #DC2626; color: white; }
+    .rol-vendedor { background: #2E7D32; color: white; }
+    .rol-inventarista { background: #F59E0B; color: white; }
+`;
+document.head.appendChild(style);
+
+// ==================== EXPORTAR FUNCIONES GLOBALES ====================
+window.agregarAlCarrito = agregarAlCarrito;
+window.cambiarCantidad = cambiarCantidad;
+window.eliminarDelCarrito = eliminarDelCarrito;
+window.vaciarCarrito = vaciarCarrito;
+window.abrirModalPago = abrirModalPago;
+window.cerrarModalPago = cerrarModalPago;
+window.confirmarPago = confirmarPago;
+window.cerrarModalTicket = cerrarModalTicket;
+window.imprimirTicket = imprimirTicket;
+window.descargarTicketPDF = descargarTicketPDF;
+window.mostrarModalEnvioCorreo = mostrarModalEnvioCorreo;
+window.cerrarModalEmailInput = cerrarModalEmailInput;
+window.enviarTicketEmailMultiple = enviarTicketEmailMultiple;
+window.editarProducto = editarProducto;
+window.eliminarProducto = eliminarProducto;
+window.resetFormulario = resetFormulario;
+window.buscarProductos = buscarProductos;
+window.generarReporteSemanal = generarReporteSemanal;
+window.cerrarReporteSemanal = cerrarReporteSemanal;
+window.imprimirReporteSemanal = imprimirReporteSemanal;
+window.abrirModalFacturacion = abrirModalFacturacion;
+window.cerrarModalFacturacion = cerrarModalFacturacion;
+window.cambiarTipoComprobante = cambiarTipoComprobante;
+window.generarFactura = generarFactura;
+window.mostrarModalCompraExitosa = mostrarModalCompraExitosa;
+window.cerrarCompraExitosa = cerrarCompraExitosa;
+window.confirmarFacturaSi = confirmarFacturaSi;
+window.confirmarFacturaNo = confirmarFacturaNo;
+window.cerrarEmailExito = cerrarEmailExito;
+window.mostrarToast = mostrarToast;
+window.editarUsuario = editarUsuario;
+window.eliminarUsuario = eliminarUsuario;
+window.cancelarEdicionUsuario = cancelarEdicionUsuario;

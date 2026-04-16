@@ -1,0 +1,38 @@
+<?php
+require_once 'db.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $data = json_decode(file_get_contents('php://input'), true);
+    $producto_id = intval($data['producto_id']);
+    $cantidad = intval($data['cantidad']);
+    
+    $result = $conn->query("SELECT stock, precio FROM productos WHERE id = $producto_id");
+    $producto = $result->fetch_assoc();
+    
+    if (!$producto) {
+        echo json_encode(['success' => false, 'message' => 'Producto no encontrado']);
+        exit;
+    }
+    
+    if ($producto['stock'] < $cantidad) {
+        echo json_encode(['success' => false, 'message' => 'Stock insuficiente']);
+        exit;
+    }
+    
+    $total = $producto['precio'] * $cantidad;
+    $nuevo_stock = $producto['stock'] - $cantidad;
+    $fecha = date('Y-m-d H:i:s');
+    
+    $conn->query("UPDATE productos SET stock = $nuevo_stock WHERE id = $producto_id");
+    
+    $sql = "INSERT INTO ventas (fecha, producto_id, cantidad, total) VALUES ('$fecha', $producto_id, $cantidad, $total)";
+    
+    if ($conn->query($sql)) {
+        echo json_encode(['success' => true, 'message' => 'Venta registrada', 'total' => $total, 'nuevo_stock' => $nuevo_stock]);
+    } else {
+        echo json_encode(['success' => false, 'error' => $conn->error]);
+    }
+}
+
+$conn->close();
+?>

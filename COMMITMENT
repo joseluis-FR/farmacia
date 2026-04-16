@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Farmacia El Olivo - Sistema de Ventas</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i class="fas fa-hospital-user"></i>
+                <span>Farmacia<span>El<span> Olivo</span></span></span>
+            </div>
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" data-tab="dashboard" id="navDashboard">
+                    <i class="fas fa-chart-pie"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="tienda" id="navTienda">
+                    <i class="fas fa-store"></i>
+                    <span>Tienda</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="inventario" id="navInventario">
+                    <i class="fas fa-boxes"></i>
+                    <span>Inventario</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="ventas" id="navVentas">
+                    <i class="fas fa-shopping-cart"></i>
+                    <span>Venta Rapida</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="historial" id="navHistorial">
+                    <i class="fas fa-history"></i>
+                    <span>Historial</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="reportes" id="navReportes">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Reportes</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="usuarios" id="navUsuarios" style="display: none;">
+                    <i class="fas fa-users"></i>
+                    <span>Usuarios</span>
+                </a>
+            </nav>
+            <div class="user-info">
+                <i class="fas fa-user-circle"></i>
+                <div>
+                    <p id="userName">Bienvenido</p>
+                    <span id="userRol">Administrador</span>
+                </div>
+                <button id="logoutBtn" class="logout-btn" title="Cerrar Sesion" onclick="cerrarSesion()">
+    <i class="fas fa-sign-out-alt"></i>
+</button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-bar">
+                <div class="page-title">
+                    <h1 id="pageTitle">Dashboard</h1>
+                    <p id="pageSubtitle">Estadisticas y productos mas vendidos</p>
+                </div>
+                <div class="header-actions">
+                    <button class="cart-toggle-btn" id="cartToggleBtn">
+                        <i class="fas fa-shopping-cart"></i>
+                        <span class="cart-badge" id="cartBadge">0</span>
+                    </button>
+                </div>
+            </header>
+            <div id="tabContent" class="tab-content-container"></div>
+        </main>
+
+        <!-- Carrito Lateral -->
+        <div class="cart-sidebar" id="cartSidebar">
+            <div class="cart-header">
+                <h3><i class="fas fa-shopping-cart"></i> Carrito de Compras</h3>
+                <button class="close-cart" id="closeCartBtn">&times;</button>
+            </div>
+            <div class="cart-body" id="cartBody">
+                <div class="empty-cart">
+                    <i class="fas fa-shopping-basket"></i>
+                    <p>Tu carrito esta vacio</p>
+                    <small>Agrega productos desde la tienda</small>
+                </div>
+            </div>
+            <div class="cart-footer" id="cartFooter" style="display: none;">
+                <div class="cart-total">
+                    <span>Total:</span>
+                    <strong id="cartTotal">$0.00</strong>
+                </div>
+                <button class="btn-pagar" onclick="abrirModalPago()">
+                    <i class="fas fa-credit-card"></i> Procesar Pago
+                </button>
+            </div>
+        </div>
+        <div class="cart-overlay" id="cartOverlay"></div>
+    </div>
+
+    <!-- Modal de Pago -->
+    <div id="pagoModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-credit-card"></i> Metodo de Pago</h3>
+                <span class="close-modal" onclick="cerrarModalPago()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="resumen-compra">
+                    <h4>Resumen de compra</h4>
+                    <div id="resumenItems"></div>
+                    <div class="resumen-total">
+                        <strong>Total a pagar:</strong>
+                        <strong id="modalTotal">$0.00</strong>
+                    </div>
+                </div>
+                <div class="metodos-pago">
+                    <h4>Seleccione metodo de pago</h4>
+                    <div class="pago-opciones">
+                        <label class="pago-option">
+                            <input type="radio" name="pago" value="efectivo" checked>
+                            <i class="fas fa-money-bill-wave"></i>
+                            <span>Efectivo</span>
+                        </label>
+                        <label class="pago-option">
+                            <input type="radio" name="pago" value="tarjeta">
+                            <i class="fas fa-credit-card"></i>
+                            <span>Tarjeta</span>
+                        </label>
+                    </div>
+                    <div id="efectivoDetalle" class="pago-detalle">
+                        <label>Monto recibido</label>
+                        <input type="number" id="montoRecibido" placeholder="0.00" step="0.01">
+                        <div id="cambioInfo" class="cambio-info"></div>
+                    </div>
+                    <div id="tarjetaDetalle" class="pago-detalle" style="display: none;">
+                        <label>Ultimos 4 digitos</label>
+                        <input type="text" id="tarjetaNumero" maxlength="4" placeholder="****">
+                        <label>Banco</label>
+                        <select id="banco">
+                            <option value="BCP">BCP</option>
+                            <option value="BBVA">BBVA</option>
+                            <option value="Interbank">Interbank</option>
+                            <option value="Scotiabank">Scotiabank</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="cerrarModalPago()">Cancelar</button>
+                <button class="btn-primary" onclick="confirmarPago()">Confirmar Pago</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Ticket -->
+    <div id="ticketModal" class="modal">
+        <div class="modal-content ticket-modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-receipt"></i> Ticket de Venta</h3>
+                <span class="close-modal" onclick="cerrarModalTicket()">&times;</span>
+            </div>
+            <div class="modal-body" id="ticketContent"></div>
+            <div class="modal-footer" style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; padding: 20px;">
+                <button class="btn-primary" onclick="imprimirTicket()" style="background: #2E7D32;">
+                    <i class="fas fa-print"></i> Imprimir Ticket
+                </button>
+                <button class="btn-primary" onclick="descargarTicketPDF()" style="background: #2E7D32;">
+                    <i class="fas fa-file-pdf"></i> Descargar PDF
+                </button>
+                <button class="btn-primary" onclick="mostrarModalEnvioCorreo()" style="background: #FBC02D; color: #333;">
+                    <i class="fas fa-envelope"></i> Enviar al Correo
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para enviar correo -->
+    <div id="emailInputModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-envelope"></i> Enviar Ticket por Correo</h3>
+                <span class="close-modal" onclick="cerrarModalEmailInput()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>Ingrese los correos electronicos (separados por coma):</p>
+                <div class="form-group" style="margin-top: 20px;">
+                    <label>Correos electronicos:</label>
+                    <input type="text" id="emailClienteInput" placeholder="cliente@ejemplo.com, admin@farmacia.com" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px;">
+                    <small style="color: #666; display: block; margin-top: 5px;">Puedes ingresar multiples correos separados por coma</small>
+                </div>
+                <div class="form-group" style="margin-top: 15px;">
+                    <label>Mensaje adicional (opcional):</label>
+                    <textarea id="mensajeAdicional" rows="3" placeholder="Gracias por su compra" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="cerrarModalEmailInput()">Cancelar</button>
+                <button class="btn-primary" onclick="enviarTicketEmailMultiple()">Enviar a todos</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de reporte semanal -->
+    <div id="reporteSemanalModal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-chart-line"></i> Reporte Semanal de Ventas</h3>
+                <span class="close-modal" onclick="cerrarReporteSemanal()">&times;</span>
+            </div>
+            <div class="modal-body" id="reporteSemanalContent" style="max-height: 500px; overflow-y: auto;"></div>
+            <div class="modal-footer">
+                <button class="btn-primary" onclick="imprimirReporteSemanal()">Imprimir</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Facturacion -->
+    <div id="facturacionModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-file-invoice"></i> Datos para Facturacion</h3>
+                <span class="close-modal" onclick="cerrarModalFacturacion()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Tipo de Comprobante</label>
+                    <select id="tipoComprobante" class="form-control" onchange="cambiarTipoComprobante()">
+                        <option value="ticket">Ticket (Sin factura)</option>
+                        <option value="boleta">Boleta de Venta</option>
+                        <option value="factura">Factura Electronica</option>
+                    </select>
+                </div>
+                <div id="datosFactura" style="display: none;">
+                    <div class="form-title" style="margin-top: 20px;">Datos del Cliente</div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Tipo de Documento</label>
+                            <select id="tipoDocumento">
+                                <option value="DNI">DNI</option>
+                                <option value="RUC">RUC</option>
+                                <option value="CE">Carnet de Extranjeria</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Numero de Documento</label>
+                            <input type="text" id="numeroDocumento" placeholder="12345678" maxlength="11">
+                        </div>
+                        <div class="form-group">
+                            <label>Razon Social / Nombre</label>
+                            <input type="text" id="razonSocial" placeholder="Nombre del cliente">
+                        </div>
+                        <div class="form-group">
+                            <label>Direccion</label>
+                            <input type="text" id="direccionCliente" placeholder="Direccion completa">
+                        </div>
+                        <div class="form-group">
+                            <label>Correo Electronico</label>
+                            <input type="email" id="emailClienteFactura" placeholder="cliente@email.com">
+                        </div>
+                        <div class="form-group">
+                            <label>Telefono</label>
+                            <input type="text" id="telefonoCliente" placeholder="999999999">
+                        </div>
+                    </div>
+                </div>
+                <div id="resumenFactura" style="margin-top: 20px; padding: 15px; background: #F5F7FA; border-radius: 10px;">
+                    <h4>Resumen de la Venta</h4>
+                    <div id="resumenFacturaItems"></div>
+                    <div class="resumen-total"><strong>Subtotal:</strong> <strong id="facturaSubtotal">$0.00</strong></div>
+                    <div class="resumen-total"><strong>IGV (18%):</strong> <strong id="facturaIGV">$0.00</strong></div>
+                    <div class="resumen-total" style="border-top: 2px solid #2E7D32;"><strong>TOTAL:</strong> <strong id="facturaTotal">$0.00</strong></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="cerrarModalFacturacion()">Cancelar</button>
+                <button class="btn-primary" onclick="generarFactura()">Generar Comprobante</button>
+            </div>
+        </div>
+    </div>
+    
+   <!-- Modal de confirmación de compra -->
+<div id="compraExitosaModal" class="confirmation-modal">
+    <div class="confirmation-content">
+        <i class="fas fa-check-circle" style="color: #2E7D32; font-size: 70px;"></i>
+        <h3>¡Gracias por su compra!</h3>
+        <p>Su compra se ha realizado exitosamente.</p>
+        <button onclick="cerrarCompraExitosa()" class="btn-primary">Aceptar</button>
+    </div>
+</div>
+
+    <!-- Modal de decisión para factura -->
+    <div id="facturaDecisionModal" class="decision-modal">
+        <div class="decision-content">
+            <i class="fas fa-file-invoice"></i>
+            <h3>¿Desea generar factura?</h3>
+            <p>Seleccione si desea una factura electrónica con datos del cliente</p>
+            <div class="decision-buttons">
+                <button class="btn-si" onclick="confirmarFacturaSi()">Sí, generar factura</button>
+                <button class="btn-no" onclick="confirmarFacturaNo()">No, solo ticket</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de éxito al enviar correo -->
+    <div id="emailExitoModal" class="email-success-modal">
+        <div class="email-success-content">
+            <i class="fas fa-envelope-open-text"></i>
+            <h3>¡Ticket enviado!</h3>
+            <p id="emailExitoMensaje">El ticket ha sido enviado exitosamente a su correo.</p>
+            <button onclick="cerrarEmailExito()">Aceptar</button>
+        </div>
+    </div>
+        <!-- Script de seguridad -->
+    <script>
+        // Prevenir que el usuario vuelva atrás
+        (function() {
+            // Limpiar historial al cargar
+            if (window.location.pathname.includes('index.html')) {
+                if (!localStorage.getItem('usuarioActual')) {
+                    window.location.replace('login.html');
+                }
+                
+                // Prevenir botón de retroceso
+                history.pushState(null, null, location.href);
+                window.onpopstate = function() {
+                    history.pushState(null, null, location.href);
+                    alert('⚠️ No puedes regresar sin cerrar sesión');
+                };
+            }
+        })();
+    </script>
+    <!-- Librerias -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
